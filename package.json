@@ -1,0 +1,37 @@
+{
+  "name": "pi-toolkit",
+  "version": "0.1.0",
+  "description": "Organization-wide Pi agent extensions, skills, and workflow templates.",
+  "author": "Bishal Ghimire",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bishalg/pi-toolkit.git"
+  },
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-skills",
+    "antigravity",
+    "nx",
+    "expo",
+    "nextjs"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}
