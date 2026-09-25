@@ -1,45 +1,45 @@
 ---
 name: web-design
-description: Next.js (App Router, Server Components SSR), Vite, strict MVC architecture, Liquid Glass aesthetic, and responsive web performance standards. Use when designing web frontends, building glassmorphic UI components, or optimizing web accessibility and SEO.
+description: Vite SPA & modern web architecture, strict MVC separation, Liquid Glass aesthetic, edge CDN responsive images, and web performance standards. Use when designing web frontends, building glassmorphic UI components, or optimizing web accessibility and SEO.
 license: MIT
 ---
 
 # Web Design & Modern Frontend Engineering Skill
 
-This skill guides Pi on best practices for building responsive, performant, and visually stunning web applications using **Next.js (App Router with React Server Components)** and **Vite**, adhering to strict MVC and the **Liquid Glass** aesthetic.
+This skill guides Pi on architectural best practices, responsive layouts, design token consumption, and visual design standards for modern web applications using **Vite SPAs** and the **Liquid Glass** design system.
 
 ---
 
-## 1. Next.js App Router & Server Components (SSR)
+## 1. Web Architecture: Vite SPA & CDN Image Primitives
 
-1. **Server Components by Default**:
-   - Keep page components, layout containers, and data-fetching views as React Server Components (RSC) to minimize client-side JavaScript bundle size.
-   - Fetch data directly in Server Components using native `fetch` with Next.js cache tags or server-side database adapters.
-2. **Client Component Islands (`'use client'`)**:
-   - Restrict `'use client'` to leaf components requiring user interactions, browser event listeners, React state (`useState`, `useReducer`), or animation libraries.
-   - Push client boundaries as far down the component tree as possible.
-3. **Server Actions for Mutations**:
-   - Use Server Actions (`'use server'`) for form submissions and mutations, accompanied by optimistic UI updates on the client.
+1. **Vite SPA Drop-In Architecture**:
+   - Modern web apps run as Vite Single Page Applications (SPAs) rather than heavy server-rendered frameworks.
+   - Use `src/proxy.ts` for local development API forwarding. Do not create server-only `middleware.ts`.
+2. **Edge CDN Responsive Image Primitives**:
+   - **Never import `next/image`** in Vite web applications.
+   - Use CDN-backed image components supporting `fill`, `priority`, and responsive `srcset`.
+   - Always run image URLs through CDN optimization utilities (`getOptimizedCdnUrl`) to resize images at the edge. This eliminates client RAM thrashing, layout shift (CLS), and scroll hitching on mobile web.
 
 ---
 
-## 2. Strict MVC Architectural Pattern
+## 2. Strict MVC Architectural Pattern & Dumb Views
 
-- **View Layer**:
-  - Dumb presentational components (`.tsx`).
-  - Contains strictly layout and rendering markup.
-  - Zero embedded database queries, external API calls, or complex domain mathematics.
+- **View Layer (`.tsx`)**:
+  - Views are strictly "dumb" render-only components (<500 lines ideal, 800 lines hard limit).
+  - No embedded business math, inline static datasets, or direct network fetching.
+  - Render layout, display state, and delegate user actions to callbacks.
 - **Model / Controller Layer**:
-  - Domain logic, calculations, and data fetching reside exclusively in custom hooks, server actions, or domain service modules.
-  - Wrap third-party and native calculations in error boundaries.
+  - Extract state, calculations, and data queries into custom hooks (`use*.ts`), state stores, or service modules.
+  - Wrap third-party calculation engines and async operations in error boundaries.
 
 ---
 
-## 3. "Liquid Glass" Visual Aesthetic & Design Tokens
+## 3. "Liquid Glass" Aesthetic & Design Restraint
 
-Implement modern, premium interfaces that wow users:
+Implement a premium, tactile interface that wows users without visual clutter:
 
 ### Glassmorphism System
+
 - **Translucency & Backdrop Blur**:
   ```css
   background: rgba(255, 255, 255, 0.05);
@@ -49,49 +49,40 @@ Implement modern, premium interfaces that wow users:
   border-radius: 16px;
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
   ```
-- **Standardized Elements**:
+- **Standardized Surface Elements**:
   - `GlassCard`: Layered container with subtle gradient reflections and specular edge highlight.
   - `GlassInput`: Floating input with soft inner glow and blurred backdrop.
   - `GlassButton`: Tactile button with micro-hover scaling (`transform: scale(1.02)`) and active state compression.
+- **Design Restraint (Anti-Slop Guidelines)**:
+  - **No Multi-Stop Gradients**: Avoid arbitrary chaotic gradient fills (`bg-gradient-to-*`) on cards. Use calm, standardized Liquid Glass surfaces with monochromatic contrast.
+  - **Typography Hierarchy**: Headings (`<h1>`, `<h2>`) must always come first, followed by clean subtitle copy. Never place floating capsule/pill badges above main titles.
 - **Design Tokens**:
-  - Consume tokens from the core design language package (`packages/design-language-core`).
+  - Consume tokens from the centralized design package (`packages/design-language-core`).
   - Token definitions must have zero React dependencies.
 
 ---
 
 ## 4. Accessibility & SEO Excellence
 
-- **Lighthouse Standard**: Target Lighthouse Performance and Accessibility scores > 90.
-- **Dynamic Metadata**:
-  - Implement Next.js `generateMetadata` on all public routes:
-    ```typescript
-    export async function generateMetadata({ params }): Promise<Metadata> {
-      return {
-        title: `${pageTitle} | Platform`,
-        description: pageSummary,
-        openGraph: {
-          title: pageTitle,
-          description: pageSummary,
-          images: [{ url: ogImageUrl, width: 1200, height: 630 }],
-        },
-      };
-    }
-    ```
-- **Semantic HTML**: Use single `<h1>` per page, descriptive aria labels, proper landmark elements (`<header>`, `<main>`, `<nav>`, `<footer>`), and contrast ratios >= 4.5:1.
-- **Unique Test IDs**: Ensure interactive elements have distinct `id` and `data-testid` attributes.
+- **Lighthouse Performance & Accessibility**: Maintain minimum score > 90 across mobile and desktop audits.
+- **Semantic Structure**:
+  - Single `<h1>` per page with proper heading hierarchy.
+  - Use semantic landmarks (`<header>`, `<main>`, `<nav>`, `<footer>`, `<section>`).
+  - Maintain color contrast ratios >= 4.5:1 for text against translucent glass backgrounds.
+- **Unique Test Identifiers**: Ensure interactive buttons, forms, and cards have unique `id` and `data-testid` attributes.
 
 ---
 
 ## 5. Internationalization (i18n)
 
-- Support multi-language locales (e.g., `en`, `ne`, `hi`).
-- Maintain modular locale JSON dictionaries for domain terminology.
-- **Invariant**: Never hardcode user-facing strings in JSX; always wrap text in localization helper functions (e.g. `t('key')`).
+- Support multi-language locales (e.g. English, Nepali, Hindi).
+- Use shared locale dictionaries for domain-specific terminology.
+- **Requirement**: Never hardcode user-facing strings directly in JSX markup; all strings must be wrapped in translation functions (e.g. `t('key')`).
 
 ---
 
 ## 6. Code Integrity & Logging Standards
 
-- **File Limit**: Maximum 800 lines per file. Break large views into modular components.
-- **Logging**: Strictly NO `console.log` or `console.error` in production. Use the centralized `platformLog` utility.
-- **Mock Data**: Strictly NO mock data in production builds. Always handle loading, empty, and error states gracefully with skeleton loaders.
+- **File Limit**: Maximum 800 lines per file. Split monolithic components into focused sub-components.
+- **Zero Raw Console Logs**: Strictly NO `console.log` or `console.error` in production code. Use the centralized diagnostic logger (`platformLog`).
+- **No Mock Data in Production**: App must handle loading, offline, and error states gracefully using shimmering skeleton cards.

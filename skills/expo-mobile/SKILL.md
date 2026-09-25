@@ -28,11 +28,13 @@ This skill guides Pi on architectural best practices, high-performance rendering
 To prevent UI stutter and maintain smooth 60/120 FPS performance:
 
 ### The UI Thread Invariant
+
 - **Reanimated Worklets**: Execute all animations and gestures on the UI thread using `react-native-reanimated` (`useAnimatedStyle`, `withSpring`, `withTiming`).
 - **Gesture Handler**: Pair with `react-native-gesture-handler` for fluid swipes and bottom sheets.
 - **Never** perform expensive calculations or JSON parsing inside animation frames.
 
 ### Virtualized Lists
+
 - Prefer `@shopify/flash-list` over standard `FlatList` for long lists.
 - If using `FlatList`:
   - Provide `getItemLayout` when item heights are fixed.
@@ -68,6 +70,7 @@ const RenderItem = React.memo(({ item, onSelect }: ItemProps) => (
 ## 4. "Liquid Glass" iOS Design Aesthetics
 
 Implement a tactile, native iOS aesthetic:
+
 - **Translucency & Blur**: Use `expo-blur` (`<BlurView intensity={40} tint="systemThinMaterial">`) for floating headers, navigation bars, and cards.
 - **Subtle Specular Borders**: Apply `borderWidth: 1` with a semi-transparent border (e.g., `rgba(255, 255, 255, 0.12)`) and corner radii between `16px` and `24px`.
 - **Haptic Feedback**: Trigger `expo-haptics` (`Haptics.selectionAsync()` or `Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)`) on interactive touch points.

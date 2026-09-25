@@ -24,6 +24,7 @@ This skill guides Pi on best practices, commands, and architectural constraints 
 All projects should declare tags in their `project.json` to enforce architectural constraints with `@nx/enforce-module-boundaries`:
 
 ### Tag Dimensions
+
 - **`scope:<domain>`**: Identifies the business or functional domain (e.g., `scope:core`, `scope:auth`, `scope:shared`, `scope:mobile`).
 - **`type:<layer>`**: Identifies the architectural layer:
   - `type:app`: Top-level runnable applications (Next.js, Expo).
@@ -33,6 +34,7 @@ All projects should declare tags in their `project.json` to enforce architectura
   - `type:util`: Pure functions, mathematical algorithms, astronomy engines.
 
 ### Dependency Flow Matrix
+
 - `type:app` ➔ `type:feature`, `type:ui`, `type:data-access`, `type:util`
 - `type:feature` ➔ `type:ui`, `type:data-access`, `type:util`
 - `type:ui` ➔ `type:util` (no feature or data-access dependencies)
@@ -44,7 +46,9 @@ All projects should declare tags in their `project.json` to enforce architectura
 ## 3. Safe Path Mapping & Barrel Stripping
 
 ### Centralized TypeScript Paths
+
 Always import workspace packages via their declared TypeScript path aliases:
+
 ```typescript
 // ✅ Good: Centralized module path alias
 import { GlassCard } from "@myorg/design-language-core";
@@ -55,7 +59,9 @@ import { GlassCard } from "../../../packages/design-language-core/src/components
 ```
 
 ### Barrel Stripping & Native Isolation
+
 Avoid importing from giant root barrels (`index.ts`) if they re-export heavy native modules (e.g. WASM, native C++ bindings, or heavy UI libraries).
+
 - Provide explicit subpath exports in `package.json`:
   ```json
   "exports": {
@@ -73,6 +79,7 @@ Avoid importing from giant root barrels (`index.ts`) if they re-export heavy nat
 Always run Nx commands from the workspace root using `npx nx`:
 
 ### Impacted / Affected Workflows
+
 ```bash
 # Run tests only on projects affected by changes relative to main/dev
 npx nx affected --target=test --base=origin/dev --head=HEAD
@@ -85,6 +92,7 @@ npx nx affected --target=build --base=origin/dev --head=HEAD
 ```
 
 ### Multi-Project Target Execution
+
 ```bash
 # Run tests across all workspace packages
 npx nx run-many --target=test --all --parallel=3
@@ -94,6 +102,7 @@ npx nx run-many --target=build --projects=web-app,mobile-app
 ```
 
 ### Dependency Graph & Troubleshooting
+
 ```bash
 # Generate visual project graph
 npx nx graph
@@ -110,6 +119,7 @@ npx nx reset
 ## 5. Agent Verification Checklist
 
 Before completing any monorepo task:
+
 - [ ] Run `npx nx affected -t lint` to ensure no module boundary violations were introduced.
 - [ ] Run `npx nx affected -t test` to verify unit test coverage remains passing.
 - [ ] Confirm no relative path traversals (`../../`) cross package boundaries.
