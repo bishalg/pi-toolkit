@@ -22,7 +22,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { resolveBinary, runSafeProcess } from "./shared/exec-safe.js";
+import { resolveBinary, runSafeProcess, tokenizeArgs } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Types & State
@@ -133,6 +133,12 @@ export default function diagnoseExtension(pi: ExtensionAPI): void {
     }
   }
 
+  // 0. Session Start: Restore TUI status
+  pi.on("session_start", async (_event, ctx) => {
+    const state = loadDiagnoseState(ctx.cwd);
+    updateTUI(ctx, state);
+  });
+
   // 1. Tool: track_diagnostic_instrumentation
   pi.registerTool({
     name: "track_diagnostic_instrumentation",
@@ -201,8 +207,9 @@ export default function diagnoseExtension(pi: ExtensionAPI): void {
             const content = fs.readFileSync(abs, "utf8");
             if (
               content.includes("console.log(") ||
-              content.includes("console.error(") ||
-              content.includes("// DEBUG_PROBE")
+              content.includes("console.debug(") ||
+              content.includes("// DEBUG_PROBE") ||
+              content.includes("// TEMP_DEBUG")
             ) {
               lingering.push(file);
             }
@@ -231,12 +238,26 @@ export default function diagnoseExtension(pi: ExtensionAPI): void {
         });
       }
 
-      const parts = testCmd.trim().split(/\s+/);
+      const parts = tokenizeArgs(testCmd);
+      if (parts.length === 0) {
+        throw new Error("Regression test command cannot be empty.");
+      }
       const binary = parts[0];
       const args = parts.slice(1);
 
+      let resolvedBinary: string;
+      try {
+        resolvedBinary = resolveBinary(binary);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `❌ Test runner not found for '${testCmd}': ${errorMsg}. Please ensure it is installed and on your PATH.`,
+          { cause: err },
+        );
+      }
+
       const raw = await runSafeProcess({
-        binaryPath: resolveBinary(binary) || binary,
+        binaryPath: resolvedBinary,
         args,
         cwd: ctx.cwd,
         timeoutSeconds: 120,
@@ -270,6 +291,7 @@ export default function diagnoseExtension(pi: ExtensionAPI): void {
           resolved: true,
           testCommand: testCmd,
           exitCode: 0,
+          remainingInstrumented: state.instrumentedFiles.length,
         },
       };
     },

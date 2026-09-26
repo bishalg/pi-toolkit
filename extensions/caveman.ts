@@ -36,11 +36,23 @@ export default function cavemanExtension(pi: ExtensionAPI): void {
 
   // 1. Inject Ultra-Terse Directive via before_agent_start
   pi.on("before_agent_start", (event, ctx) => {
+    if (!event.systemPromptOptions) {
+      (event as unknown as Record<string, unknown>).systemPromptOptions = { sections: {} };
+    }
+    if (!event.systemPromptOptions.sections) {
+      event.systemPromptOptions.sections = {};
+    }
+
     if (isCavemanActive) {
       event.systemPromptOptions.sections.caveman = CAVEMAN_PROMPT_DIRECTIVE;
     } else {
       delete event.systemPromptOptions.sections.caveman;
     }
+    updateTUI(ctx);
+  });
+
+  // Session start handler
+  pi.on("session_start", (_event, ctx) => {
     updateTUI(ctx);
   });
 

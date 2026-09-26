@@ -87,17 +87,28 @@ function getContextFilePath(cwd: string): string {
   return path.join(cwd, "CONTEXT.md");
 }
 
-function parseExistingGlossary(cwd: string): Map<string, GlossaryEntry> {
+interface ParsedGlossary {
+  preamble?: string;
+  glossary: Map<string, GlossaryEntry>;
+}
+
+function parseExistingGlossary(cwd: string): ParsedGlossary {
   const glossary = new Map<string, GlossaryEntry>();
   const filePath = getContextFilePath(cwd);
+  let preamble: string | undefined;
 
-  if (!fs.existsSync(filePath)) return glossary;
+  if (!fs.existsSync(filePath)) return { glossary };
 
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const sections = raw.split(/^###\s+/m);
 
-    for (const section of sections) {
+    if (sections[0] && sections[0].trim()) {
+      preamble = sections[0].trim();
+    }
+
+    for (let i = 1; i < sections.length; i++) {
+      const section = sections[i];
       if (!section.trim()) continue;
       const lines = section.split("\n");
       const term = lines[0].trim();
@@ -106,8 +117,8 @@ function parseExistingGlossary(cwd: string): Map<string, GlossaryEntry> {
       let definition = "";
       let context: string | undefined;
 
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
+      for (let j = 1; j < lines.length; j++) {
+        const line = lines[j].trim();
         if (line.startsWith("- **Definition**:")) {
           definition = line.replace("- **Definition**:", "").trim();
         } else if (line.startsWith("- **Context**:")) {
@@ -123,17 +134,18 @@ function parseExistingGlossary(cwd: string): Map<string, GlossaryEntry> {
     // Non-fatal
   }
 
-  return glossary;
+  return { preamble, glossary };
 }
 
-function writeGlossary(cwd: string, glossary: Map<string, GlossaryEntry>): void {
+function writeGlossary(cwd: string, glossary: Map<string, GlossaryEntry>, preamble?: string): void {
   const filePath = getContextFilePath(cwd);
   const sorted = Array.from(glossary.values()).sort((a, b) => a.term.localeCompare(b.term));
 
-  let out =
-    `# Ubiquitous Language Glossary (CONTEXT.md)\n\n` +
-    `Domain terminology and shared concepts. Strictly contains business domain definitions without ephemeral implementation noise.\n\n` +
-    `---\n\n`;
+  const cleanPreamble = preamble ? preamble.replace(/\n*---\s*$/, "").trim() : undefined;
+
+  let out = cleanPreamble
+    ? `${cleanPreamble}\n\n---\n\n`
+    : `# Ubiquitous Language Glossary (CONTEXT.md)\n\nDomain terminology and shared concepts. Strictly contains business domain definitions without ephemeral implementation noise.\n\n---\n\n`;
 
   for (const entry of sorted) {
     out += `### ${entry.term}\n`;
@@ -232,7 +244,7 @@ export default function grillExtension(pi: ExtensionAPI): void {
 
       // Handle glossary terms
       if (params.glossaryTerms && params.glossaryTerms.length > 0) {
-        const glossary = parseExistingGlossary(ctx.cwd);
+        const { preamble, glossary } = parseExistingGlossary(ctx.cwd);
         for (const item of params.glossaryTerms) {
           glossary.set(item.term.toLowerCase(), {
             term: item.term,
@@ -240,7 +252,7 @@ export default function grillExtension(pi: ExtensionAPI): void {
             context: item.context,
           });
         }
-        writeGlossary(ctx.cwd, glossary);
+        writeGlossary(ctx.cwd, glossary, preamble);
         glossaryUpdated = true;
         termsCount = params.glossaryTerms.length;
       }

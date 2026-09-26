@@ -16,7 +16,7 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { handleOutputTruncation, resolveBinary, runSafeProcess } from "./shared/exec-safe.js";
+import { handleOutputTruncation, resolveBinary, runSafeProcess } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Parameters & Types
@@ -81,7 +81,12 @@ async function runDesignWorker(
   cwd: string,
   signal?: AbortSignal,
 ): Promise<DesignVariantResult> {
-  const binaryPath = resolveBinary("pi") || "pi";
+  let binaryPath = "pi";
+  try {
+    binaryPath = resolveBinary("pi");
+  } catch {
+    // Fall back to 'pi' on PATH
+  }
 
   const workerPrompt =
     `You are an expert TypeScript API architect.\n` +

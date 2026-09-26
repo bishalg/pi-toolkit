@@ -25,7 +25,7 @@ import {
   resolveBinary,
   runSafeProcess,
   tokenizeArgs,
-} from "./shared/exec-safe.js";
+} from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Constants & Types
@@ -73,11 +73,7 @@ let cachedAgyBinary: string | null = null;
 
 export function resolveAgyBinary(): string {
   if (cachedAgyBinary) {
-    try {
-      return resolveBinary("agy");
-    } catch {
-      cachedAgyBinary = null;
-    }
+    return cachedAgyBinary;
   }
   const binary = resolveBinary("agy");
   cachedAgyBinary = binary;

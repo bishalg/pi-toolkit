@@ -18,7 +18,12 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { resolveBinary, runSafeProcess } from "./shared/exec-safe.js";
+import {
+  extractBashMutationTargets,
+  resolveBinary,
+  runSafeProcess,
+  tokenizeArgs,
+} from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Types & State
@@ -140,6 +145,12 @@ export default function tddExtension(pi: ExtensionAPI): void {
     }
   }
 
+  // 0. Session Start: Restore TUI status
+  pi.on("session_start", async (_event, ctx) => {
+    const state = loadTDDState(ctx.cwd);
+    updateTUI(ctx, state);
+  });
+
   // 1. Hard Tool Guardrails
   pi.on("tool_call", async (event, ctx) => {
     const state = loadTDDState(ctx.cwd);
@@ -195,6 +206,34 @@ export default function tddExtension(pi: ExtensionAPI): void {
       }
     }
 
+    // Intercept bash mutation
+    if (event.toolName === "bash") {
+      const input = event.input as Record<string, unknown> | undefined;
+      const cmd = (typeof input?.command === "string" ? input.command : "").trim();
+      const targets = extractBashMutationTargets(cmd);
+
+      for (const rawTarget of targets) {
+        const target = rawTarget.replace(/\\/g, "/");
+        if (target === "/dev/null") continue;
+
+        const isTest = isTestFilePath(target);
+        const isPiConfig = target.startsWith(".pi/") || target.startsWith("./.pi/");
+
+        if (state.phase === "red" && !isTest && !isPiConfig) {
+          return {
+            block: true,
+            reason: `[TDD RED Phase] Bash mutation targeting non-test file '${target}' is blocked. In RED phase, only test files (*.spec.*, *.test.*) may be modified.`,
+          };
+        }
+        if (state.phase === "green" && isTest) {
+          return {
+            block: true,
+            reason: `[TDD GREEN Phase] Bash mutation targeting test file '${target}' is blocked. In GREEN phase, test files are locked. Implement application source code instead.`,
+          };
+        }
+      }
+    }
+
     return undefined;
   });
 
@@ -240,12 +279,37 @@ export default function tddExtension(pi: ExtensionAPI): void {
       }
 
       // Execute test command safely
-      const parts = cmd.trim().split(/\s+/);
+      const parts = tokenizeArgs(cmd);
+      if (parts.length === 0) {
+        throw new Error("Test command cannot be empty.");
+      }
       const binary = parts[0];
       const args = parts.slice(1);
 
+      let resolvedBinary: string;
+      try {
+        resolvedBinary = resolveBinary(binary);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ **Test Execution Error**: Test command '${cmd}' failed to run: ${errorMsg}\nEnsure the test runner is installed and the command is valid.`,
+            },
+          ],
+          details: {
+            phaseBefore: state.phase,
+            phaseAfter: state.phase,
+            exitCode: 127,
+            command: cmd,
+            cyclesCompleted: state.cyclesCompleted,
+          },
+        };
+      }
+
       const raw = await runSafeProcess({
-        binaryPath: resolveBinary(binary) || binary,
+        binaryPath: resolvedBinary,
         args,
         cwd: ctx.cwd,
         timeoutSeconds: 120,
@@ -259,6 +323,27 @@ export default function tddExtension(pi: ExtensionAPI): void {
       const outputPreview = (raw.stdout + "\n" + raw.stderr).trim().slice(-1500);
 
       if (phaseBefore === "red") {
+        if (
+          raw.exitCode === 127 ||
+          raw.stderr.includes("command not found") ||
+          raw.stderr.includes("ENOENT")
+        ) {
+          message =
+            `❌ **Test Execution Error**: Test command '${cmd}' failed to run (Exit code: ${raw.exitCode}).\n` +
+            `Ensure the test runner is installed and the command is valid.\n\n` +
+            `\`\`\`text\n${outputPreview}\n\`\`\``;
+          return {
+            content: [{ type: "text", text: message }],
+            details: {
+              phaseBefore,
+              phaseAfter: phaseBefore,
+              exitCode: raw.exitCode,
+              command: cmd,
+              cyclesCompleted: state.cyclesCompleted,
+            },
+          };
+        }
+
         if (raw.exitCode !== 0) {
           // Expected failure in RED phase!
           phaseAfter = "green";

@@ -16,6 +16,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { extractBashMutationTargets } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Types & State Definitions
@@ -283,6 +284,12 @@ export default function sddExtension(pi: ExtensionAPI): void {
     }
   }
 
+  // 0. Session Start: Restore TUI status
+  pi.on("session_start", async (_event, ctx) => {
+    const state = loadSDDState(ctx.cwd);
+    updateTUI(ctx, state);
+  });
+
   // 1. Tool Call Interceptor: Hard Guardrail Against Writing Application Code
   pi.on("tool_call", async (event, ctx) => {
     const state = loadSDDState(ctx.cwd);
@@ -327,6 +334,37 @@ export default function sddExtension(pi: ExtensionAPI): void {
               `Only files inside 'specs/' (and '.pi/') may be written or edited during this phase. ` +
               `Complete the specification, planning, and task breakdown, then have the user run '/sdd implement' to unlock codebase edits.`,
           };
+        }
+      }
+
+      // Guard against mutating application code via bash (redirection, tee, sed -i, rm, mv)
+      if (event.toolName === "bash") {
+        const input = event.input as Record<string, unknown> | undefined;
+        const cmd = (typeof input?.command === "string" ? input.command : "").trim();
+        const targets = extractBashMutationTargets(cmd);
+
+        for (const rawTarget of targets) {
+          const target = rawTarget.replace(/\\/g, "/");
+          if (target === "/dev/null") continue;
+
+          const isSpec =
+            target === "specs" || target.startsWith("specs/") || target.startsWith("./specs/");
+          const isPi = target === ".pi" || target.startsWith(".pi/") || target.startsWith("./.pi/");
+
+          if (!isSpec && !isPi) {
+            if (ctx.hasUI) {
+              ctx.ui.notify(
+                `🔒 SDD Enforcement: Bash file mutation outside 'specs/' is locked in '${state.phase}'.`,
+                "error",
+              );
+            }
+            return {
+              block: true,
+              reason:
+                `[SDD Enforcement] Bash command attempts to modify '${target}' outside 'specs/'. ` +
+                `In '${state.phase}' phase, code modifications are locked. Only files inside 'specs/' are allowed.`,
+            };
+          }
         }
       }
     }

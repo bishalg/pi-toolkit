@@ -9,6 +9,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { extractBashMutationTargets } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Security Patterns & Protected Paths
@@ -16,12 +17,12 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 const PROTECTED_FILE_PATTERNS = [
   /(^|\/)\.env(\..+)?$/i, // .env, .env.local, .env.production
-  /(^|\/)\.git\//i, // .git internals
+  /(^|\/)\.git(\/|$)/i, // .git internals or .git directory
   /(^|\/)node_modules\//i, // node_modules
   /\.(pem|key|pfx|pkcs12)$/i, // Certificate private keys
   /(^|\/)id_(rsa|ed25519|dsa)(\.pub)?$/i, // SSH keys
-  /(^|\/)\.ssh\//i, // ~/.ssh
-  /(^|\/)\.aws\//i, // AWS credentials
+  /(^|\/)\.ssh(\/|$)/i, // ~/.ssh
+  /(^|\/)\.aws(\/|$)/i, // AWS credentials
 ];
 
 const DANGEROUS_BASH_PATTERNS = [
@@ -32,6 +33,10 @@ const DANGEROUS_BASH_PATTERNS = [
   {
     pattern: /\brm\s+(-rf?|--recursive)\s+(\.|\.\.|\*)(\s|$)/i,
     desc: "Recursive deletion of current directory or wildcard",
+  },
+  {
+    pattern: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f?|--recursive)\b.*(\.git|\.ssh|\.aws|\.env)/i,
+    desc: "Destructive deletion of repository metadata or credentials",
   },
   { pattern: /\bgit\s+push\b.*(-f|--force)\b/i, desc: "Forced git push to remote repository" },
   { pattern: /\bgit\s+reset\s+--hard\b/i, desc: "Hard git reset discarding uncommitted changes" },
@@ -67,8 +72,15 @@ export default function safetyGuardExtension(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event, ctx) => {
     if (!safetyEnabled) return undefined;
 
+    const isWriteTool =
+      event.toolName === "write" ||
+      event.toolName === "edit" ||
+      event.toolName.startsWith("write_") ||
+      event.toolName.startsWith("edit_") ||
+      event.toolName.includes("replace_file");
+
     // A. Protect Sensitive Files against Write / Edit
-    if (event.toolName === "write" || event.toolName === "edit") {
+    if (isWriteTool) {
       const input = event.input as Record<string, unknown> | undefined;
       const targetPath = (
         typeof input?.path === "string"
@@ -89,10 +101,27 @@ export default function safetyGuardExtension(pi: ExtensionAPI): void {
       }
     }
 
-    // B. Guard Dangerous Bash Commands
+    // B. Guard Dangerous Bash Commands & Mutation Bypasses
     if (event.toolName === "bash") {
       const input = event.input as Record<string, unknown> | undefined;
       const command = (typeof input?.command === "string" ? input.command : "") as string;
+
+      // Check if bash command modifies any protected files (via redirection, tee, sed -i, rm, mv)
+      const mutationTargets = extractBashMutationTargets(command);
+      const sensitiveTarget = mutationTargets.find((t) => isProtectedPath(t));
+      if (sensitiveTarget) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            `🛡️ Safety Guard: Blocked bash mutation to protected path: ${sensitiveTarget}`,
+            "error",
+          );
+        }
+        return {
+          block: true,
+          reason: `Safety Guard: Bash command targets protected path '${sensitiveTarget}' (.env, .git, or credentials). Direct mutation is forbidden.`,
+        };
+      }
+
       const dangerDesc = matchDangerousCommand(command);
 
       if (dangerDesc) {

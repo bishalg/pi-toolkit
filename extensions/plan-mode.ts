@@ -13,6 +13,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { extractBashMutationTargets } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Constants & Tool Sets
@@ -55,12 +56,39 @@ const READ_ONLY_COMMANDS = [
   "pnpm model scan",
 ];
 
-function isSafeBashCommand(command: string): boolean {
+export function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
-  // Check if command starts with any known read-only command prefix
-  return READ_ONLY_COMMANDS.some(
-    (prefix) => trimmed === prefix || trimmed.startsWith(`${prefix} `),
-  );
+  if (!trimmed) return true;
+
+  // Any command that outputs to files (redirection, tee, sed -i, rm, mv, cp, touch) is blocked
+  const mutationTargets = extractBashMutationTargets(trimmed);
+  if (mutationTargets.length > 0) {
+    return false;
+  }
+
+  // Explicitly block mutative command keywords anywhere in command
+  if (
+    /\b(rm|mv|cp|mkdir|rmdir|touch|chmod|chown|sudo|curl\s+-[a-zA-Z]*o|wget|git\s+(commit|push|checkout|merge|rebase|reset|clean|tag|cherry-pick))\b/i.test(
+      trimmed,
+    )
+  ) {
+    return false;
+  }
+
+  // Split by chaining operators (&&, ||, ;, |)
+  const subCommands = trimmed.split(/&&|\|\||;|\|/);
+  for (const sub of subCommands) {
+    const cleanSub = sub.trim();
+    if (!cleanSub) continue;
+    const isAllowed = READ_ONLY_COMMANDS.some(
+      (prefix) => cleanSub === prefix || cleanSub.startsWith(`${prefix} `),
+    );
+    if (!isAllowed) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------

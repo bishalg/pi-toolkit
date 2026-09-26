@@ -19,7 +19,7 @@ import {
   handleOutputTruncation,
   resolveBinary,
   runSafeProcess,
-} from "./shared/exec-safe.js";
+} from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Parameters & Types
@@ -72,15 +72,15 @@ let cachedPiBinary: string | null = null;
 
 function getPiBinary(): string {
   if (cachedPiBinary) {
-    try {
-      return resolveBinary("pi");
-    } catch {
-      cachedPiBinary = null;
-    }
+    return cachedPiBinary;
   }
-  const bin = resolveBinary("pi");
-  cachedPiBinary = bin;
-  return bin;
+  try {
+    const bin = resolveBinary("pi");
+    cachedPiBinary = bin;
+    return bin;
+  } catch {
+    return "pi";
+  }
 }
 
 async function executeSubagent(

@@ -296,3 +296,67 @@ export async function handleOutputTruncation(
     fullOutputPath: logFilePath,
   };
 }
+
+/**
+ * Extracts target file paths modified, created, or deleted by a shell command.
+ * Inspects output redirections (>), pipes to tee, in-place sed edits (-i), rm, mv, cp, and touch.
+ */
+export function extractBashMutationTargets(cmd: string): string[] {
+  const targets: string[] = [];
+  const cleanCmd = cmd.trim();
+  if (!cleanCmd) return targets;
+
+  // 1. Redirections: > file, >> file, 1> file, 2> file
+  // Exclude file descriptor duplications (e.g. 2>&1, 1>&2)
+  const redirectMatches = cleanCmd.matchAll(/(?:[0-9]|&)?>{1,2}\s*([^\s;&|]+)/g);
+  for (const m of redirectMatches) {
+    const rawTarget = m[1]?.replace(/["']/g, "").trim();
+    if (rawTarget && !/^&[0-9]+$/.test(rawTarget)) {
+      targets.push(rawTarget);
+    }
+  }
+
+  // 2. tee targets: tee file, tee -a file
+  const teeMatches = cleanCmd.matchAll(/\btee\s+(?:-[a-zA-Z]+\s+)*([^\s;&|]+)/g);
+  for (const m of teeMatches) {
+    const rawTarget = m[1]?.replace(/["']/g, "").trim();
+    if (rawTarget && !rawTarget.startsWith("-")) {
+      targets.push(rawTarget);
+    }
+  }
+
+  // 3. sed -i in-place edits: sed -i ... file
+  const sedMatches = cleanCmd.matchAll(
+    /\bsed\s+-[a-zA-Z]*i[a-zA-Z]*(?:\s+-[a-zA-Z]+|\s+'[^']*'|\s+"[^"]*")*\s+([^\s;&|]+)/g,
+  );
+  for (const m of sedMatches) {
+    const rawTarget = m[1]?.replace(/["']/g, "").trim();
+    if (rawTarget && !rawTarget.startsWith("-")) {
+      targets.push(rawTarget);
+    }
+  }
+
+  // 4. File-mutating filesystem commands: rm, unlink, touch
+  const fsSingleMatches = cleanCmd.matchAll(
+    /\b(rm|unlink|touch)\s+(?:-[a-zA-Z0-9-]+\s+)*([^\s;&|]+)/g,
+  );
+  for (const m of fsSingleMatches) {
+    const rawTarget = m[2]?.replace(/["']/g, "").trim();
+    if (rawTarget && !rawTarget.startsWith("-")) {
+      targets.push(rawTarget);
+    }
+  }
+
+  // 5. Binary filesystem operations: mv, cp (captures both source and destination)
+  const fsDoubleMatches = cleanCmd.matchAll(
+    /\b(mv|cp)\s+(?:-[a-zA-Z0-9-]+\s+)*([^\s;&|]+)\s+([^\s;&|]+)/g,
+  );
+  for (const m of fsDoubleMatches) {
+    const src = m[2]?.replace(/["']/g, "").trim();
+    const dst = m[3]?.replace(/["']/g, "").trim();
+    if (src && !src.startsWith("-")) targets.push(src);
+    if (dst && !dst.startsWith("-")) targets.push(dst);
+  }
+
+  return Array.from(new Set(targets));
+}

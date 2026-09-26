@@ -18,7 +18,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { handleOutputTruncation, runSafeProcess } from "./shared/exec-safe.js";
+import { handleOutputTruncation, runSafeProcess } from "./shared/exec-safe.ts";
 
 // ---------------------------------------------------------------------------
 // Types & Schema
