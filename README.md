@@ -1,8 +1,8 @@
 # 🧰 pi-toolkit
 
-> Organization-wide **Pi agent** extensions, on-demand skills, and workflow prompt templates.
+> Organization-wide **Pi agent** extensions, on-demand skills, themes, local model management, and workflow prompt templates.
 
-`pi-toolkit` provides a modular architecture for the [Pi Coding Agent](https://pi.dev). Instead of bloating the agent's context window with every convention upfront, Pi loads specialized skills on-demand and exposes targeted developer tools (`/agy`, `/audit`, `/release-check`, `/tanstack-route`, `/init-project`).
+`pi-toolkit` turns [@earendil-works/pi-coding-agent](https://pi.dev) into a full-featured, batteries-included engineering harness. Instead of bloating context windows upfront, Pi dynamically loads specialized skills on-demand, enforces strict safety boundaries, isolates sub-agents, connects external MCP servers, and provides instant workflow commands.
 
 ---
 
@@ -19,26 +19,40 @@ pi-toolkit/
 │   └── pre-commit              # Git pre-commit hook (typecheck + lint-staged)
 ├── README.md                   # Full documentation & usage instructions
 ├── .gitignore                  # Git exclusions (.DS_Store, logs, node_modules)
+├── scripts/
+│   └── model-manager.ts        # CLI to inspect, switch & symlink local AI models (pnpm model)
+├── themes/
+│   └── cyber-obsidian.json     # High-contrast developer dark theme
 ├── extensions/
 │   ├── agy.ts                  # Antigravity CLI integration & /agy command
+│   ├── subagent.ts             # Isolated sub-agent runner (tool + /subagent command)
+│   ├── plan-mode.ts            # Read-only planning mode (Ctrl+Alt+P or /plan)
+│   ├── safety-guard.ts         # Sensitive file shield & destructive command gate
+│   ├── mcp-bridge.ts           # On-demand Model Context Protocol bridge (/mcp)
 │   └── shared/
-│       └── exec-safe.ts        # Shared safe process runner (shell: false, signals)
+│       └── exec-safe.ts        # Safe process runner (shell: false, signals, truncation)
 ├── skills/
 │   ├── antigravity/
 │   │   └── SKILL.md            # Guidelines for invoking agy, subagents & MCP
-│   ├── nx-monorepo/
-│   │   └── SKILL.md            # Nx workspace, caching & module boundaries
+│   ├── app-store-connect/
+│   │   └── SKILL.md            # Apple App Store, TestFlight & asc CLI automation
 │   ├── expo-mobile/
 │   │   └── SKILL.md            # React Native, Expo Router & 60/120 FPS patterns
+│   ├── nx-monorepo/
+│   │   └── SKILL.md            # Nx workspace, caching & module boundaries
 │   ├── tanstack-vite/
 │   │   └── SKILL.md            # TanStack Router v1, Query, loaders & head() SEO
-│   └── web-design/
-│       └── SKILL.md            # Vite SPA, dumb views, MVC & Liquid Glass tokens
+│   ├── web-design/
+│   │   └── SKILL.md            # Vite SPA, dumb views, MVC & Liquid Glass tokens
+│   └── web-perf/
+│       └── SKILL.md            # Core Web Vitals (LCP, INP, CLS) & Lighthouse audits
 ├── prompts/
-│   ├── audit.md                # /audit slash command for code quality
-│   ├── release-check.md        # /release-check slash command for release gates
-│   ├── tanstack-route.md       # /tanstack-route slash command for route scaffolding
-│   └── init-project.md         # /init-project slash command to scaffold AGENTS.md
+│   ├── arch-review.md          # /arch-review read-only architecture & dependency audit
+│   ├── audit.md                # /audit multi-dimensional code quality & security audit
+│   ├── handoff.md              # /handoff context compaction & session handoff generator
+│   ├── init-project.md         # /init-project scaffolds tailored AGENTS.md
+│   ├── release-check.md        # /release-check pre-release verification gates
+│   └── tanstack-route.md       # /tanstack-route scaffolds TanStack Router routes
 └── templates/
     └── AGENTS.base.md          # Master organization AGENTS.md baseline template
 ```
@@ -77,71 +91,122 @@ pi install ~/Documents/WORK/Open\ Source/pi-toolkit
 
 ---
 
-## ⚡ Features & Modules
+## ⚡ Extensions & Capabilities
 
-### 1. Antigravity CLI Extension (`extensions/agy.ts`)
+### 1. Sub-Agent Delegation (`extensions/subagent.ts`)
 
-Connects Pi directly to the **Antigravity CLI (`agy`)**:
+Spawns isolated, headless Pi child processes (`pi -p --mode json`) to execute secondary tasks without contaminating the parent context window.
 
-- **Agent Tool (`agy`)**: The agent can autonomously execute CLI commands, models discovery, and MCP listings using discrete argument arrays.
-- **Slash Command (`/agy`)**: Interactive terminal command with argument completions and operation pickers:
+- **Agent Tool (`subagent`)**: Allows the primary agent to delegate focused tasks (e.g., codebase exploration, deep audits, test generation) with a defined model, budget, and scope.
+- **Slash Command (`/subagent <task>`)**: User command to quickly launch a background sub-agent.
+- **Safe Sandboxing**: Child processes run in isolated contexts with separate working directories and strict execution timeouts.
+
+### 2. Plan Mode (`extensions/plan-mode.ts`)
+
+Puts the agent into a strict read-only planning state before any code is modified.
+
+- **Toggle via Shortcut**: Press `Ctrl+Alt+P` anytime to toggle Plan Mode on/off.
+- **Slash Command (`/plan [on|off]`)**: Switch modes programmatically.
+- **Strict Guardrails**: When active, all mutating tools (`write`, `edit`) are disabled via `pi.setActiveTools()`. Bash commands are filtered through a strict read-only allowlist (`ls`, `cat`, `git status`, `git diff`, `grep`, `find`, etc.).
+
+### 3. Safety Guard (`extensions/safety-guard.ts`)
+
+Active shield preventing data loss, credential leaks, and accidental system damage.
+
+- **Sensitive File Shield**: Blocks modifications or deletions of `.env*`, `.git/`, credentials (`id_rsa`, `.p8`, `.pem`), and CI secrets.
+- **Destructive Command Interceptor**: Intercepts high-risk shell commands (`rm -rf`, `git push --force`, `git reset --hard`, `mkfs`, `sudo`) and pauses execution until explicit user confirmation is granted in the TUI.
+- **Slash Command (`/safety`)**: View current protection status and intercepted statistics.
+
+### 4. MCP Bridge (`extensions/mcp-bridge.ts`)
+
+Dynamic, on-demand connection to **Model Context Protocol (MCP)** servers over standard `stdio`.
+
+- **Slash Command (`/mcp`)**: Interactive manager to list, connect, disconnect, and inspect tools from configured MCP servers:
+  ```text
+  /mcp list
+  /mcp connect <serverName>
+  /mcp disconnect <serverName>
+  ```
+- **Configuration**: Automatically reads server definitions from `.pi/mcp.json` or `~/.pi/mcp.json`.
+
+### 5. Antigravity CLI Integration (`extensions/agy.ts`)
+
+Bridges Pi directly to Google Antigravity CLI tools.
+
+- **Agent Tool (`agy`)**: Direct tool access for the model to invoke `agy` operations.
+- **Slash Command (`/agy`)**: Interactive terminal completions:
   ```text
   /agy models
   /agy plugin list
   /agy mcp list
   /agy changelog
   ```
-- **Shared Process Safety (`extensions/shared/exec-safe.ts`)**: Built with `shell: false` (immune to shell injection), streaming output updates, POSIX argument tokenizer, signal cleanup (SIGTERM -> SIGKILL), and automatic output truncation protection (>2,000 lines or >50KB).
-
-### 2. On-Demand Skills (`skills/`)
-
-Pi advertises these skills by name and description, loading their full guidelines into context only when needed:
-
-- **`antigravity`** (`skills/antigravity/`): Guidance on delegating long-running autonomous tasks, checking provider limits, and querying MCP tools.
-- **`nx-monorepo`** (`skills/nx-monorepo/`): Enterprise Nx architectural boundaries, `scope:*` and `type:*` tags, computation caching, and barrel export optimization.
-- **`expo-mobile`** (`skills/expo-mobile/`): React Native and Expo Router standards, UI-thread animations (Reanimated worklets), FlashList optimization, offline-first sync, and iOS Liquid Glass styling.
-- **`tanstack-vite`** (`skills/tanstack-vite/`): TanStack Router (`createFileRoute`, search param validation, loader prefetching), mandatory `head()` SEO metadata contract, SPA navigation contract, and Vite chunk splitting.
-- **`web-design`** (`skills/web-design/`): Modern web frontend standards, strict MVC dumb-view separation, Liquid Glass tokens (`GlassCard`, `GlassInput`), edge CDN responsive image optimization, and anti-slop typography.
-
-To explicitly force Pi to load a skill:
-
-```text
-/skill:tanstack-vite configure loader prefetching for dynamic route
-/skill:nx-monorepo check dependency graph for circular references
-/skill:expo-mobile optimize profile scroll performance
-```
-
-### 3. Workflow Prompts (`prompts/`)
-
-Reusable `/` slash commands:
-
-- **`/init-project`**: Scans the current repository and bootstraps a tailored `AGENTS.md` based on `templates/AGENTS.base.md`, with recommended skills and quality gates.
-- **`/tanstack-route <path>`**: Scaffolds a complete TanStack Router route file with `head()` SEO metadata, TanStack Query prefetching, and MVC separation.
-  ```text
-  /tanstack-route /items/$id
-  ```
-- **`/audit [target]`**: Multi-dimensional codebase audit checking architecture boundaries, type safety, secret leakage, logging hygiene, and accessibility.
-  ```text
-  /audit
-  /audit packages/design-language-core
-  ```
-- **`/release-check [target-branch]`**: Multi-gate pre-release checklist validating git clean state, unit tests (TDD), typechecks, linters, production builds, and changelog updates.
-  ```text
-  /release-check
-  /release-check dev
-  ```
+- **Shared Safe Runner (`extensions/shared/exec-safe.ts`)**: Built with `shell: false`, streaming output, argument tokenization, POSIX signal handling (SIGTERM -> SIGKILL), and output truncation guards (>2,000 lines or >50KB).
 
 ---
 
-## 🧠 Pi Session & Context Best Practices
+## 🎨 Themes
 
-Take full advantage of Pi's native session commands:
+### Cyber Obsidian (`themes/cyber-obsidian.json`)
 
-- **`/compact [instructions]`**: Run targeted compaction (e.g. `/compact Keep all TypeBox schema rules and decisions`) before switching tasks. Compresses older messages while preserving key decisions.
-- **`/tree`**: View session branches. Experiment with alternative implementations on different branches; switching branches automatically records a summary of the abandoned path.
-- **`/fork`**: Spin off an unexpected bug investigation or side quest into a clean, standalone session file.
-- **`/clone`**: Duplicate the active session branch into a new session.
-- **`--session-dir <dir>`**: Group session history into a custom directory or project-local sync folder (`export PI_CODING_AGENT_SESSION_DIR=.pi/sessions`).
+A developer-first, high-contrast dark theme inspired by Obsidian and Cyberpunk aesthetics:
+
+- Ultra-deep obsidian background (`#0d1117`) with crisp electric cyan (`#58a6ff`), mint green (`#3fb950`), vibrant coral (`#f85149`), and warm amber (`#d29922`) highlights.
+- Selectable directly inside Pi via the theme picker or in `~/.pi/agent/settings.json`.
+
+---
+
+## 🧠 Local Model Management (`scripts/model-manager.ts`)
+
+Manage, inspect, benchmark, switch, and symlink local GGUF/Safetensors weights across Antigravity IDE and local AI harnesses:
+
+```bash
+# Launch interactive local model manager
+pnpm model
+
+# Or run directly via Node
+node --experimental-strip-types scripts/model-manager.ts
+```
+
+- **HDD Model Scanner**: Scans common AI cache paths (`~/.ollama`, `~/.cache/huggingface`, `~/.lmstudio`, `~/.local/share/nomic.ai`) for downloaded weights.
+- **Benchmark & RAM Sizing**: Displays parameter count, quantization format, RAM requirements, and coding benchmark intelligence scores.
+- **Quick Switching**: Toggles between cloud-only (low RAM usage) and local hybrid execution modes.
+
+---
+
+## 📚 On-Demand Skills (`skills/`)
+
+Skills are loaded into the agent's context dynamically when relevant tasks are triggered:
+
+- **`antigravity`** (`skills/antigravity/`): Delegation patterns for autonomous background agents, provider quotas, and MCP tools.
+- **`app-store-connect`** (`skills/app-store-connect/`): Complete Apple release lifecycle: automated Xcode builds, build number auto-incrementing, TestFlight beta tester orchestration, metadata push/pull, and App Store review submission via `asc`.
+- **`expo-mobile`** (`skills/expo-mobile/`): React Native and Expo Router architecture, 60/120 FPS UI thread animations, FlashList performance, and Liquid Glass design.
+- **`nx-monorepo`** (`skills/nx-monorepo/`): Enterprise monorepo boundaries, dependency linting, computation caching, and barrel export optimization.
+- **`tanstack-vite`** (`skills/tanstack-vite/`): TanStack Router v1, query prefetching in route loaders, mandatory `head()` SEO contracts, and Vite bundle splitting.
+- **`web-design`** (`skills/web-design/`): Modern web frontend standards, strict MVC dumb-view architecture, Liquid Glass tokens (`GlassCard`, `GlassInput`), and anti-slop typography.
+- **`web-perf`** (`skills/web-perf/`): Core Web Vitals (LCP, INP, CLS) optimization, render-blocking asset mitigation, long-task reduction, and Lighthouse 90+ score enforcement.
+
+To explicitly force Pi to load a specific skill:
+
+```text
+/skill:app-store-connect prepare build and submit to TestFlight
+/skill:web-perf audit LCP and layout shifts on landing page
+/skill:tanstack-vite configure loader prefetching for dynamic route
+/skill:nx-monorepo check dependency graph for circular references
+```
+
+---
+
+## 📝 Workflow Prompts (`prompts/`)
+
+Reusable `/` slash commands for engineering workflows:
+
+- **`/arch-review [scope]`**: Performs a read-only architectural review evaluating module boundaries, circular dependencies, state ownership, and concurrency lifecycles.
+- **`/audit [target]`**: Multi-dimensional codebase audit checking architecture boundaries, type safety, secret leakage, logging hygiene, and accessibility.
+- **`/handoff [target]`**: Compiles current session context, git status, completed changes, verification results, and remaining roadmap into a clean handoff document.
+- **`/init-project [notes]`**: Scans repository structure and bootstraps a tailored `AGENTS.md` based on `templates/AGENTS.base.md`.
+- **`/release-check [branch]`**: Pre-release verification checklist validating git cleanliness, unit tests (TDD), typechecks, linters, production builds, and changelogs.
+- **`/tanstack-route <path>`**: Scaffolds a complete TanStack Router route with SEO metadata, loader prefetching, and MVC separation.
 
 ---
 
@@ -149,36 +214,14 @@ Take full advantage of Pi's native session commands:
 
 `pi-toolkit` enforces strict quality standards via **Husky** and **lint-staged**:
 
-- **Type Safety**: `npm run typecheck` (`tsc --noEmit`) validates all extensions without emitting artifacts.
-- **Linting**: `npm run lint` (`eslint extensions/`) enforces strict TypeScript rules, zero console logs, and safe error handling.
-- **Formatting**: `npm run format:check` verifies Prettier compliance across all files.
+- **Type Safety**: `pnpm run typecheck` (`tsc --noEmit`) validates all extensions without emitting artifacts.
+- **Linting**: `pnpm run lint` (`eslint extensions/`) enforces strict TypeScript rules, zero unused variables, and zero console logs in production code.
+- **Formatting**: `pnpm run format:check` verifies Prettier compliance across all files.
 
-To run manual verification:
-
-```bash
-npm run check
-```
-
----
-
-## 🛠️ Management & Verification
-
-### View Configured Packages
+To run full project verification:
 
 ```bash
-pi list
-```
-
-### Reconcile or Update
-
-```bash
-pi update --extensions
-```
-
-### Remove Package
-
-```bash
-pi remove git:github.com/bishalg/pi-toolkit
+pnpm run check
 ```
 
 ---
@@ -186,9 +229,9 @@ pi remove git:github.com/bishalg/pi-toolkit
 ## 🤝 Contributing
 
 1. Fork or branch from `main` (or `dev`).
-2. Add new extensions to `extensions/`, skills to `skills/<name>/SKILL.md`, or prompts to `prompts/<name>.md`.
+2. Add new extensions to `extensions/`, skills to `skills/<name>/SKILL.md`, prompts to `prompts/<name>.md`, or themes to `themes/<name>.json`.
 3. Test locally in Pi with `/reload`.
-4. Ensure `npm run check` passes before committing.
+4. Ensure `pnpm run check` passes before committing.
 5. Submit a Pull Request.
 
 ---

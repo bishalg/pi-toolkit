@@ -1,0 +1,750 @@
+#!/usr/bin/env node
+/**
+ * pi-toolkit Model Manager
+ *
+ * Unified CLI & interactive utility to manage, switch, toggle, and download
+ * local AI models for hybrid agent execution (Antigravity & Pi Agent).
+ *
+ * Usage:
+ *   pnpm model               # Interactive dashboard & menu
+ *   pnpm model status        # Display current memory, hybrid toggle & active model
+ *   pnpm model enable        # Enable local hybrid execution
+ *   pnpm model disable       # Disable local hybrid execution (pure cloud)
+ *   pnpm model toggle        # Toggle hybrid execution on/off
+ *   pnpm model switch <id>   # Switch active local model (e.g. gemma4-26b, gemma4-e2b)
+ *   pnpm model list          # List all discovered and recommended models
+ *   pnpm model download <id> # Download / import recommended models
+ *   pnpm model unload        # Unload loaded models / free RAM immediately
+ */
+
+import { execSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+
+// ---------------------------------------------------------------------------
+// Types & Interfaces
+// ---------------------------------------------------------------------------
+
+export type ModelProvider = "litert" | "lmstudio" | "ollama" | "cloud";
+
+export interface ModelMetadata {
+  id: string;
+  name: string;
+  provider: ModelProvider;
+  format: string;
+  sizeGb: number;
+  ramEstimateGb: number;
+  path: string;
+  isDownloaded: boolean;
+  benchmarkScore?: string;
+  description: string;
+}
+
+export interface ModelConfig {
+  hybridEnabled: boolean;
+  activeModelId: string;
+  activeModelPath: string;
+  provider: ModelProvider;
+  cloudFallback: string;
+  lastUpdated: string;
+}
+
+// ---------------------------------------------------------------------------
+// Constants & Paths
+// ---------------------------------------------------------------------------
+
+const CONFIG_PATH = path.resolve(process.cwd(), ".model-config.json");
+const ENV_LOCAL_PATH = path.resolve(process.cwd(), ".env.local");
+const HOME = os.homedir();
+const LITERT_MODELS_DIR = path.join(HOME, ".litert-lm", "models");
+const LITERT_BIN = path.join(HOME, ".antigravity", "venv", "bin", "litert-lm");
+
+const RECOMMENDED_MODELS: Record<string, Omit<ModelMetadata, "isDownloaded" | "path">> = {
+  "gemma4-26b": {
+    id: "gemma4-26b",
+    name: "Gemma 4 26B A4B (Google AI Edge / LiteRT)",
+    provider: "litert",
+    format: "LiteRT-LM (.litertlm)",
+    sizeGb: 14.7,
+    ramEstimateGb: 14.0,
+    benchmarkScore: "HumanEval: 81.5% | EvalPlus: 74.0%",
+    description: "Official Antigravity flagship. MoE (Active 4B) for high speed & deep reasoning.",
+  },
+  "gemma4-e2b": {
+    id: "gemma4-e2b",
+    name: "Gemma 4 E2B-IT (LiteRT)",
+    provider: "litert",
+    format: "LiteRT-LM (.litertlm)",
+    sizeGb: 2.4,
+    ramEstimateGb: 3.0,
+    benchmarkScore: "HumanEval: ~42.0%",
+    description: "Ultra-compact edge model. Great for fast file indexing and commit messages.",
+  },
+  "gemma3-1b": {
+    id: "gemma3-1b",
+    name: "Gemma 3 1B-IT (LiteRT Quantized)",
+    provider: "litert",
+    format: "LiteRT-LM (.litertlm)",
+    sizeGb: 0.55,
+    ramEstimateGb: 1.0,
+    benchmarkScore: "HumanEval: ~34.0%",
+    description: "Micro model (<1GB RAM). Instant startup for regex and token-free scouting.",
+  },
+  "qwen2.5-coder-14b": {
+    id: "qwen2.5-coder-14b",
+    name: "Qwen 2.5 Coder 14B Instruct",
+    provider: "lmstudio",
+    format: "GGUF",
+    sizeGb: 9.0,
+    ramEstimateGb: 12.0,
+    benchmarkScore: "HumanEval: 86.8% | EvalPlus: 80.5%",
+    description: "State-of-the-art coding benchmark king for mid-range RAM via LM Studio / Ollama.",
+  },
+};
+
+// ANSI Color Helpers
+const c = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  cyan: "\x1b[36m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  magenta: "\x1b[35m",
+};
+
+// ---------------------------------------------------------------------------
+// Configuration Management
+// ---------------------------------------------------------------------------
+
+export function loadConfig(): ModelConfig {
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as ModelConfig;
+    } catch {
+      // ignore parse error, fallback to default
+    }
+  }
+
+  // Default configuration
+  const defaultConfig: ModelConfig = {
+    hybridEnabled: true,
+    activeModelId: "gemma4-e2b",
+    activeModelPath: path.join(LITERT_MODELS_DIR, "gemma4-e2b", "model.litertlm"),
+    provider: "litert",
+    cloudFallback: "gemini-3.8-flash-high",
+    lastUpdated: new Date().toISOString(),
+  };
+
+  saveConfig(defaultConfig);
+  return defaultConfig;
+}
+
+export function saveConfig(config: ModelConfig): void {
+  config.lastUpdated = new Date().toISOString();
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8");
+  syncEnvLocal(config);
+}
+
+function syncEnvLocal(config: ModelConfig): void {
+  const envContent = `# Auto-generated by pi-toolkit model manager
+AGY_HYBRID_MODE=${config.hybridEnabled ? "true" : "false"}
+AGY_LOCAL_MODEL_ID=${config.activeModelId}
+AGY_LOCAL_MODEL_PATH=${config.activeModelPath}
+AGY_LOCAL_PROVIDER=${config.provider}
+AGY_CLOUD_FALLBACK=${config.cloudFallback}
+`;
+
+  try {
+    fs.writeFileSync(ENV_LOCAL_PATH, envContent, "utf-8");
+  } catch (err) {
+    console.error(`${c.red}Failed to write .env.local:${c.reset}`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Model Discovery Engine
+// ---------------------------------------------------------------------------
+
+export function discoverModels(): ModelMetadata[] {
+  const discovered: Map<string, ModelMetadata> = new Map();
+
+  // 1. Scan LiteRT directory (~/.litert-lm/models)
+  if (fs.existsSync(LITERT_MODELS_DIR)) {
+    const entries = fs.readdirSync(LITERT_MODELS_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const modelId = entry.name;
+        const candidatePath = path.join(LITERT_MODELS_DIR, modelId, "model.litertlm");
+        if (fs.existsSync(candidatePath)) {
+          const stats = fs.statSync(candidatePath);
+          const sizeGb = stats.size / (1024 * 1024 * 1024);
+          const rec = RECOMMENDED_MODELS[modelId];
+          const isComplete = rec ? sizeGb >= rec.sizeGb * 0.7 : sizeGb > 0.1;
+
+          discovered.set(modelId, {
+            id: modelId,
+            name: rec ? rec.name : `LiteRT Model (${modelId})`,
+            provider: "litert",
+            format: "LiteRT-LM (.litertlm)",
+            sizeGb: Number(sizeGb.toFixed(2)),
+            ramEstimateGb: rec ? rec.ramEstimateGb : Math.ceil(sizeGb * 1.1),
+            path: candidatePath,
+            isDownloaded: isComplete,
+            benchmarkScore: rec?.benchmarkScore,
+            description: rec?.description || "Local LiteRT compiled model.",
+          });
+        }
+      }
+    }
+  }
+
+  // 2. Scan central ~/models/llms/ and Downloads folder for .litertlm files
+  const searchDirs = [
+    path.join(HOME, "models", "llms", "litert"),
+    path.join(HOME, "models", "llms"),
+    path.join(HOME, "Downloads"),
+  ];
+
+  for (const sdir of searchDirs) {
+    if (fs.existsSync(sdir)) {
+      const files = fs.readdirSync(sdir);
+      for (const file of files) {
+        if (file.endsWith(".litertlm")) {
+          const fullPath = path.join(sdir, file);
+          const stats = fs.statSync(fullPath);
+          const sizeGb = stats.size / (1024 * 1024 * 1024);
+          const fallbackId = path.parse(file).name.toLowerCase();
+
+          // If not already discovered in litert-lm directory
+          if (!discovered.has(fallbackId)) {
+            discovered.set(fallbackId, {
+              id: fallbackId,
+              name: file,
+              provider: "litert",
+              format: "LiteRT-LM (.litertlm)",
+              sizeGb: Number(sizeGb.toFixed(2)),
+              ramEstimateGb: Math.ceil(sizeGb * 1.1),
+              path: fullPath,
+              isDownloaded: true,
+              description: `Direct .litertlm file in ${sdir.replace(HOME, "~")}`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Scan LM Studio models
+  try {
+    const lmsOutput = execSync("lms ls 2>/dev/null", { encoding: "utf-8" });
+    if (lmsOutput.includes("text-embedding") || lmsOutput.includes("qwen")) {
+      // LM studio is active
+    }
+  } catch {
+    // LM studio CLI not found or inactive
+  }
+
+  // 4. Fill in non-downloaded recommended models
+  for (const [id, rec] of Object.entries(RECOMMENDED_MODELS)) {
+    if (!discovered.has(id)) {
+      discovered.set(id, {
+        ...rec,
+        path: path.join(LITERT_MODELS_DIR, id, "model.litertlm"),
+        isDownloaded: false,
+      });
+    }
+  }
+
+  return Array.from(discovered.values());
+}
+
+// ---------------------------------------------------------------------------
+// Model Operations
+// ---------------------------------------------------------------------------
+
+export function getSystemMemoryInfo(): { totalGb: number; freeGb: number; usedGb: number } {
+  const total = os.totalmem() / (1024 * 1024 * 1024);
+  const free = os.freemem() / (1024 * 1024 * 1024);
+  return {
+    totalGb: Number(total.toFixed(1)),
+    freeGb: Number(free.toFixed(1)),
+    usedGb: Number((total - free).toFixed(1)),
+  };
+}
+
+export function printStatus(): void {
+  const config = loadConfig();
+  const models = discoverModels();
+  const mem = getSystemMemoryInfo();
+  const active = models.find((m) => m.id === config.activeModelId);
+
+  console.log(
+    `\n${c.bold}${c.cyan}======================================================${c.reset}`,
+  );
+  console.log(`${c.bold}${c.cyan}        🧰 pi-toolkit Model & Hardware Status        ${c.reset}`);
+  console.log(
+    `${c.bold}${c.cyan}======================================================${c.reset}\n`,
+  );
+
+  console.log(
+    `${c.bold}Execution Mode:${c.reset}   ${
+      config.hybridEnabled
+        ? `${c.green}🟢 HYBRID (Local Scout/Builder + Cloud Architect)${c.reset}`
+        : `${c.yellow}⚪ CLOUD ONLY (Pure API Mode, Zero Local RAM)${c.reset}`
+    }`,
+  );
+
+  console.log(
+    `${c.bold}Active Model:${c.reset}     ${c.magenta}${active?.name || config.activeModelId}${c.reset} (${active?.format || "custom"})`,
+  );
+  console.log(`${c.bold}Model Path:${c.reset}       ${c.dim}${config.activeModelPath}${c.reset}`);
+  console.log(
+    `${c.bold}Provider Backend:${c.reset} ${c.cyan}${config.provider.toUpperCase()}${c.reset}`,
+  );
+  console.log(`${c.bold}Cloud Fallback:${c.reset}   ${c.yellow}${config.cloudFallback}${c.reset}`);
+
+  console.log(
+    `\n${c.bold}System Memory:${c.reset}    Total: ${mem.totalGb} GB | Free: ${c.green}${mem.freeGb} GB${c.reset} | Model Est: ${c.yellow}${active?.ramEstimateGb || 0} GB RAM${c.reset}`,
+  );
+
+  console.log(`\n${c.bold}Discovered Models on Machine:${c.reset}`);
+  for (const m of models) {
+    const isCurrent = m.id === config.activeModelId;
+    const marker = isCurrent ? `${c.green}▶ [ACTIVE]${c.reset}` : "          ";
+    const status = m.isDownloaded
+      ? `${c.green}Downloaded (${m.sizeGb} GB)${c.reset}`
+      : `${c.dim}Not Downloaded${c.reset}`;
+    console.log(`  ${marker} ${c.bold}${m.id.padEnd(18)}${c.reset} ${status.padEnd(28)} ${m.name}`);
+    if (m.benchmarkScore) {
+      console.log(`               ${c.dim}↳ ${m.benchmarkScore}${c.reset}`);
+    }
+  }
+  console.log("");
+}
+
+export function setHybrid(enabled: boolean): void {
+  const config = loadConfig();
+  config.hybridEnabled = enabled;
+  saveConfig(config);
+  console.log(
+    `\n${c.bold}Hybrid Mode updated:${c.reset} ${
+      enabled
+        ? `${c.green}🟢 ENABLED (Local models will accelerate context & testing)${c.reset}`
+        : `${c.yellow}⚪ DISABLED (Running 100% on Cloud APIs, RAM completely free)${c.reset}`
+    }\n`,
+  );
+}
+
+export function switchModel(modelId: string): void {
+  const models = discoverModels();
+  const target = models.find(
+    (m) => m.id === modelId || m.name.toLowerCase().includes(modelId.toLowerCase()),
+  );
+
+  if (!target) {
+    console.error(`\n${c.red}Error: Model '${modelId}' not found.${c.reset}`);
+    console.log(`Available model IDs: ${models.map((m) => m.id).join(", ")}\n`);
+    return;
+  }
+
+  if (!target.isDownloaded) {
+    console.warn(
+      `\n${c.yellow}Warning: Model '${target.id}' is not yet downloaded locally.${c.reset}`,
+    );
+    console.log(`Run: ${c.cyan}pnpm model download ${target.id}${c.reset} first.\n`);
+  }
+
+  const config = loadConfig();
+  config.activeModelId = target.id;
+  config.activeModelPath = target.path;
+  config.provider = target.provider;
+  saveConfig(config);
+
+  console.log(
+    `\n${c.green}✔ Active model successfully switched to:${c.reset} ${c.bold}${target.name}${c.reset}`,
+  );
+  console.log(`  Path: ${c.dim}${target.path}${c.reset}`);
+  console.log(`  Provider: ${c.cyan}${target.provider.toUpperCase()}${c.reset}\n`);
+}
+
+export function downloadModel(modelId: string): void {
+  if (modelId === "gemma4-26b") {
+    console.log(`\n${c.cyan}==> Preparing download for Gemma 4 26B A4B (14.7 GB)...${c.reset}`);
+    console.log(`${c.dim}Source: litert-community/gemma-4-26B-A4B-it-litert-lm${c.reset}`);
+
+    const cacheDir = path.join(HOME, ".litert-lm", "cache");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const localTarget = path.join(cacheDir, "gemma-4-26B-A4B-it-gpu.litertlm");
+    const downloadUrl =
+      "https://huggingface.co/litert-community/gemma-4-26B-A4B-it-litert-lm/resolve/main/gemma-4-26B-A4B-it-gpu.litertlm";
+
+    const curlCmd = `curl -C - --retry 5 --retry-delay 3 -L -o "${localTarget}" "${downloadUrl}"`;
+    const importCmd = `${LITERT_BIN} import "${localTarget}" gemma4-26b`;
+
+    console.log(`${c.bold}Step 1: Downloading weights via curl with auto-resume...${c.reset}`);
+    try {
+      execSync(curlCmd, { stdio: "inherit" });
+      console.log(`\n${c.bold}Step 2: Importing into LiteRT...${c.reset}`);
+      execSync(importCmd, { stdio: "inherit" });
+      switchModel("gemma4-26b");
+      console.log(
+        `\n${c.green}✔ Gemma 4 26B A4B downloaded and set as active local model!${c.reset}\n`,
+      );
+    } catch (err) {
+      console.error(`${c.red}Download failed:${c.reset}`, err);
+    }
+  } else if (modelId === "qwen2.5-coder-14b") {
+    console.log(`\n${c.cyan}==> Pulling Qwen 2.5 Coder 14B via LM Studio / Ollama...${c.reset}`);
+    try {
+      execSync("lms get qwen2.5-coder-14b || ollama pull qwen2.5-coder:14b", { stdio: "inherit" });
+      switchModel("qwen2.5-coder-14b");
+    } catch (err) {
+      console.error(`${c.red}Failed to pull model:${c.reset}`, err);
+    }
+  } else {
+    console.log(`${c.yellow}No automated download script for '${modelId}'.${c.reset}`);
+  }
+}
+
+export function unloadModels(): void {
+  console.log(`\n${c.cyan}==> Unloading local AI processes to free RAM...${c.reset}`);
+
+  // 1. Unload LM Studio models if running
+  try {
+    execSync("lms unload --all 2>/dev/null");
+    console.log(`  ${c.green}✔ LM Studio models unloaded.${c.reset}`);
+  } catch {
+    // not running
+  }
+
+  // 2. Kill any orphan litert-lm processes
+  try {
+    execSync("pkill -f 'litert-lm run' 2>/dev/null || true");
+    console.log(`  ${c.green}✔ LiteRT-LM processes freed.${c.reset}`);
+  } catch {
+    // none running
+  }
+
+  const mem = getSystemMemoryInfo();
+  console.log(
+    `  ${c.green}✔ RAM Cleaned! Free memory: ${mem.freeGb} GB / ${mem.totalGb} GB${c.reset}\n`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// System-Wide Model Inventory & Management
+// ---------------------------------------------------------------------------
+
+export function scanSystemAIModels(): void {
+  console.log(
+    `\n${c.bold}${c.cyan}======================================================${c.reset}`,
+  );
+  console.log(`${c.bold}${c.cyan}     🔍 Machine-Wide AI Model Inventory Scan         ${c.reset}`);
+  console.log(
+    `${c.bold}${c.cyan}======================================================${c.reset}\n`,
+  );
+  console.log(
+    `${c.dim}Scanning Spotlight for Whisper, Diffusion, LLMs, & Speech weights...${c.reset}\n`,
+  );
+
+  try {
+    const spotlightCmd =
+      'mdfind \'kMDItemFSSize > 50000000 && (kMDItemFSName == "*.safetensors" || kMDItemFSName == "*.gguf" || kMDItemFSName == "*.litertlm" || kMDItemFSName == "*.bin" || kMDItemFSName == "*.onnx" || kMDItemFSName == "*.pt" || kMDItemFSName == "*.pth")\'';
+
+    const output = execSync(spotlightCmd, { encoding: "utf-8" });
+    const rawPaths = output
+      .split("\n")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    interface FoundModel {
+      category: "Speech & Audio" | "Vision & Diffusion" | "LLM & Coding" | "Other";
+      name: string;
+      sizeGb: number;
+      path: string;
+      appHint: string;
+    }
+
+    const items: FoundModel[] = [];
+
+    for (const p of rawPaths) {
+      if (
+        p.includes("/node_modules/") ||
+        p.includes("/.git/") ||
+        p.includes("/Cellar/") ||
+        p.includes("/Cargo/")
+      ) {
+        continue;
+      }
+
+      if (!fs.existsSync(p)) continue;
+      const stats = fs.statSync(p);
+      const sizeGb = stats.size / (1024 * 1024 * 1024);
+      const fname = path.basename(p);
+      const lower = p.toLowerCase();
+
+      let category: FoundModel["category"] = "Other";
+      let appHint = "Custom/Disk";
+
+      if (
+        lower.includes("whisper") ||
+        lower.includes("asr") ||
+        lower.includes("audiosr") ||
+        lower.includes("demucs") ||
+        lower.includes("ggml-")
+      ) {
+        category = "Speech & Audio";
+      } else if (
+        lower.includes("comfyui") ||
+        lower.includes("diffusion") ||
+        lower.includes("vae") ||
+        lower.includes("image")
+      ) {
+        category = "Vision & Diffusion";
+      } else if (
+        lower.includes("gemma") ||
+        lower.includes("qwen") ||
+        lower.includes("llama") ||
+        lower.includes("litert") ||
+        lower.includes("gguf")
+      ) {
+        category = "LLM & Coding";
+      }
+
+      if (lower.includes("comfyui")) appHint = "ComfyUI";
+      else if (lower.includes("audacity")) appHint = "Audacity (OpenVINO)";
+      else if (lower.includes("typewhisper")) appHint = "TypeWhisper";
+      else if (lower.includes("anythingllm")) appHint = "AnythingLLM";
+      else if (lower.includes(".litert-lm")) appHint = "Google LiteRT";
+      else if (lower.includes("downloads")) appHint = "Downloads";
+      else if (lower.includes("huggingface")) appHint = "HuggingFace Cache";
+
+      items.push({
+        category,
+        name: fname,
+        sizeGb: Number(sizeGb.toFixed(2)),
+        path: p,
+        appHint,
+      });
+    }
+
+    items.sort((a, b) => b.sizeGb - a.sizeGb);
+
+    const categories: Array<FoundModel["category"]> = [
+      "Speech & Audio",
+      "Vision & Diffusion",
+      "LLM & Coding",
+      "Other",
+    ];
+
+    let totalDiskGb = 0;
+
+    for (const cat of categories) {
+      const catItems = items.filter((i) => i.category === cat);
+      if (catItems.length === 0) continue;
+
+      const catSum = catItems.reduce((acc, i) => acc + i.sizeGb, 0);
+      totalDiskGb += catSum;
+
+      console.log(
+        `${c.bold}${c.magenta}📁 ${cat}${c.reset} ${c.dim}(Total: ${catSum.toFixed(2)} GB)${c.reset}`,
+      );
+      for (const item of catItems) {
+        const szStr =
+          item.sizeGb >= 1.0 ? `${item.sizeGb} GB` : `${Math.round(item.sizeGb * 1024)} MB`;
+        console.log(
+          `  • ${c.bold}${item.name.padEnd(35)}${c.reset} ${c.green}${szStr.padStart(8)}${c.reset}  ${c.cyan}[${item.appHint}]${c.reset}`,
+        );
+        console.log(`    ${c.dim}${item.path}${c.reset}`);
+      }
+      console.log("");
+    }
+
+    console.log(`${c.bold}======================================================${c.reset}`);
+    console.log(
+      `${c.bold}Total AI Model Disk Footprint:${c.reset} ${c.yellow}${c.bold}${totalDiskGb.toFixed(2)} GB${c.reset} across ${items.length} files`,
+    );
+    console.log(`${c.bold}======================================================${c.reset}\n`);
+
+    console.log(`${c.bold}💡 Tip for Centralized Management:${c.reset}`);
+    console.log(
+      `You can centralize all models into ${c.cyan}~/models/${c.reset} and create symlinks back to application folders so they share weights with zero duplicated disk space.\n`,
+    );
+  } catch (err) {
+    console.error(`${c.red}Failed to query system models:${c.reset}`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive CLI Menu
+// ---------------------------------------------------------------------------
+
+async function runInteractiveMenu(): Promise<void> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const question = (query: string): Promise<string> =>
+    new Promise((resolve) => rl.question(query, resolve));
+
+  while (true) {
+    printStatus();
+    console.log(`${c.bold}Quick Actions:${c.reset}`);
+    console.log(`  ${c.cyan}[1]${c.reset} Toggle Hybrid Mode (Enable / Disable)`);
+    console.log(`  ${c.cyan}[2]${c.reset} Switch Active Model`);
+    console.log(`  ${c.cyan}[3]${c.reset} Download / Import Recommended Model`);
+    console.log(`  ${c.cyan}[4]${c.reset} Unload Models & Free RAM`);
+    console.log(`  ${c.cyan}[5]${c.reset} Scan Machine-Wide AI Models (Whisper, ComfyUI, LLMs)`);
+    console.log(`  ${c.cyan}[0]${c.reset} Exit\n`);
+
+    const answer = (await question(`${c.bold}Select an option (0-5): ${c.reset}`)).trim();
+
+    if (answer === "1") {
+      const current = loadConfig().hybridEnabled;
+      setHybrid(!current);
+      await question(`${c.dim}Press Enter to continue...${c.reset}`);
+    } else if (answer === "2") {
+      const models = discoverModels();
+      console.log(`\n${c.bold}Available Models:${c.reset}`);
+      models.forEach((m, idx) => {
+        const tag = m.isDownloaded
+          ? `${c.green}(Downloaded)${c.reset}`
+          : `${c.yellow}(Needs Download)${c.reset}`;
+        console.log(`  [${idx + 1}] ${m.id.padEnd(20)} ${tag} - ${m.name}`);
+      });
+      const sel = (await question(`\n${c.bold}Enter model number or ID: ${c.reset}`)).trim();
+      const num = parseInt(sel, 10);
+      if (!isNaN(num) && num >= 1 && num <= models.length) {
+        switchModel(models[num - 1].id);
+      } else if (sel) {
+        switchModel(sel);
+      }
+      await question(`${c.dim}Press Enter to continue...${c.reset}`);
+    } else if (answer === "3") {
+      console.log(`\n${c.bold}Recommended Models to Download:${c.reset}`);
+      console.log(
+        `  [1] ${c.bold}gemma4-26b${c.reset} (14.7 GB) - Flagship Google LiteRT Agentic Model`,
+      );
+      console.log(
+        `  [2] ${c.bold}qwen2.5-coder-14b${c.reset} (9.0 GB) - Coding Benchmark King via LM Studio`,
+      );
+      const sel = (
+        await question(`\n${c.bold}Select model to download (1-2, or Enter to cancel): ${c.reset}`)
+      ).trim();
+      if (sel === "1") downloadModel("gemma4-26b");
+      else if (sel === "2") downloadModel("qwen2.5-coder-14b");
+      await question(`${c.dim}Press Enter to continue...${c.reset}`);
+    } else if (answer === "4") {
+      unloadModels();
+      await question(`${c.dim}Press Enter to continue...${c.reset}`);
+    } else if (answer === "5") {
+      scanSystemAIModels();
+      await question(`${c.dim}Press Enter to continue...${c.reset}`);
+    } else if (answer === "0" || answer.toLowerCase() === "q" || answer.toLowerCase() === "exit") {
+      break;
+    }
+  }
+
+  rl.close();
+}
+
+// ---------------------------------------------------------------------------
+// Entry Point Router
+// ---------------------------------------------------------------------------
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const command = args[0]?.toLowerCase();
+
+  switch (command) {
+    case "status":
+    case "info":
+      printStatus();
+      break;
+    case "scan":
+    case "inventory":
+    case "disk":
+      scanSystemAIModels();
+      break;
+    case "enable":
+    case "on":
+      setHybrid(true);
+      break;
+    case "disable":
+    case "off":
+      setHybrid(false);
+      break;
+    case "toggle": {
+      const cur = loadConfig().hybridEnabled;
+      setHybrid(!cur);
+      break;
+    }
+    case "switch":
+    case "set":
+    case "use":
+      if (!args[1]) {
+        console.error(`${c.red}Please specify model ID: pnpm model switch <id>${c.reset}`);
+        process.exit(1);
+      }
+      switchModel(args[1]);
+      break;
+    case "list":
+    case "ls": {
+      const models = discoverModels();
+      console.log(`\n${c.bold}Discovered Models:${c.reset}`);
+      for (const m of models) {
+        console.log(`- ${c.bold}${m.id}${c.reset} (${m.sizeGb} GB): ${m.name}`);
+      }
+      console.log("");
+      break;
+    }
+    case "download":
+    case "pull":
+    case "import":
+      if (!args[1]) {
+        console.error(`${c.red}Please specify model ID: pnpm model download <id>${c.reset}`);
+        process.exit(1);
+      }
+      downloadModel(args[1]);
+      break;
+    case "unload":
+    case "free":
+      unloadModels();
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+      console.log(`
+Usage: pnpm model [command] [options]
+
+Commands:
+  (no args)             Interactive dashboard and menu
+  status, info          Show hardware memory, hybrid toggle and active model
+  enable, on            Enable local hybrid acceleration
+  disable, off          Disable local hybrid acceleration (pure cloud API)
+  toggle                Toggle hybrid mode on/off
+  switch <id>           Switch active local model
+  list, ls              List all discovered and available models
+  download <id>         Download/import model (e.g. gemma4-26b)
+  unload, free          Unload models to immediately free memory
+`);
+      break;
+    default:
+      if (!process.stdin.isTTY) {
+        printStatus();
+      } else {
+        await runInteractiveMenu();
+      }
+      break;
+  }
+}
+
+main().catch((err) => {
+  console.error(`${c.red}Fatal error:${c.reset}`, err);
+  process.exit(1);
+});

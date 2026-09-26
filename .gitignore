@@ -9,3 +9,7 @@ node_modules/
 *.log
 *.tmp
 .pi/
+
+# Local Model Config & Environment
+.env.local
+.model-config.json
