@@ -222,3 +222,35 @@ export interface FeatureModel {
 1. **Sequential Execution**: In Phase 5 (`implement`), work through `tasks.md` sequentially. Never jump ahead to UI before core logic tests pass.
 2. **Immediate Checkmarking**: After completing a task and verifying with the specified command, update `tasks.md` by checking off `[x] T00X`.
 3. **No Hallucinated Tools**: Rely on existing workspace utilities and libraries. Check `specs/constitution.md` before introducing any new dependency.
+
+---
+
+## 4. End-to-End Master Workflow
+
+When building non-trivial features across the monorepo, chain the tools together in this sequence:
+
+1. **`/grill <topic>`**:
+   - Scans the repo to auto-decide ~80% of standard implementation details from existing code.
+   - Asks strictly 2–3 high-impact multiple-choice questions with recommended defaults.
+   - Calls `record_domain_decision` to append ubiquitous language terms to `CONTEXT.md` and save ADRs in `docs/adr/`.
+2. **`/sdd specify <idea>`**:
+   - Auto-increments feature folder (`specs/001-slug/`).
+   - Drafts `spec.md` with user stories and Gherkin acceptance criteria (code remains locked).
+3. **`/sdd clarify`**:
+   - De-risks ambiguities and records agreed clarifications in `spec.md`.
+4. **`/design-twice <module-description>`** _(Optional for complex interfaces)_:
+   - Spawns parallel worker processes exploring Functional, Stateful, and Reactive archetypes.
+   - Selects the cleanest API direction before technical planning is locked.
+5. **`/sdd plan`**:
+   - Formulates system topology, file paths, and data models in `plan.md` validated against `specs/constitution.md`.
+6. **`/sdd tasks`**:
+   - Breaks `plan.md` into atomic, checkable work items (`- [ ] T001 ...`) in `tasks.md`.
+7. **`/sdd implement`** _(with `/tdd` enforcement)_:
+   - Unlocks codebase writes.
+   - Activate `/tdd <test-command>` for core domain logic to enforce the RED -> GREEN -> REFACTOR discipline.
+   - Progressively checks off `[x] T00X` as tests pass.
+8. **`/diagnose <bug>`** _(when unexpected defects arise)_:
+   - Enforces the 6-step loop: Reproduce -> Minimize -> Hypothesize -> Instrument -> Fix -> Regression-Test.
+   - Prohibits completion until all temporary debug probes are removed and tests pass.
+9. **`/sdd audit`**:
+   - Cross-checks implemented git diff against `spec.md` acceptance criteria and `specs/constitution.md`.
