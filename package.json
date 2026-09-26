@@ -17,7 +17,9 @@
     "nx",
     "expo",
     "tanstack",
-    "vite"
+    "vite",
+    "sdd",
+    "spec-kit"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

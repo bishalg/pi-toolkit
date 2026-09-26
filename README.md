@@ -2,7 +2,7 @@
 
 > Organization-wide **Pi agent** extensions, on-demand skills, themes, local model management, and workflow prompt templates.
 
-`pi-toolkit` turns [@earendil-works/pi-coding-agent](https://pi.dev) into a full-featured, batteries-included engineering harness. Instead of bloating context windows upfront, Pi dynamically loads specialized skills on-demand, enforces strict safety boundaries, isolates sub-agents, connects external MCP servers, and provides instant workflow commands.
+`pi-toolkit` turns [@earendil-works/pi-coding-agent](https://pi.dev) into a full-featured, batteries-included engineering harness. Instead of bloating context windows upfront, Pi dynamically loads specialized skills on-demand, enforces strict safety boundaries, isolates sub-agents, connects external MCP servers, guides Spec-Driven Development (SDD), and provides instant workflow commands.
 
 ---
 
@@ -24,14 +24,17 @@ pi-toolkit/
 ├── themes/
 │   └── cyber-obsidian.json     # High-contrast developer dark theme
 ├── extensions/
-│   ├── agy.ts                  # Antigravity CLI integration & /agy command
+│   ├── sdd.ts                  # Native Spec-Driven Development (github/spec-kit) & /sdd
 │   ├── subagent.ts             # Isolated sub-agent runner (tool + /subagent command)
 │   ├── plan-mode.ts            # Read-only planning mode (Ctrl+Alt+P or /plan)
 │   ├── safety-guard.ts         # Sensitive file shield & destructive command gate
 │   ├── mcp-bridge.ts           # On-demand Model Context Protocol bridge (/mcp)
+│   ├── agy.ts                  # Antigravity CLI integration & /agy command
 │   └── shared/
 │       └── exec-safe.ts        # Safe process runner (shell: false, signals, truncation)
 ├── skills/
+│   ├── sdd-methodology/
+│   │   └── SKILL.md            # Spec-Kit workflow, constitution, spec, plan & tasks templates
 │   ├── antigravity/
 │   │   └── SKILL.md            # Guidelines for invoking agy, subagents & MCP
 │   ├── app-store-connect/
@@ -93,7 +96,33 @@ pi install ~/Documents/WORK/Open\ Source/pi-toolkit
 
 ## ⚡ Extensions & Capabilities
 
-### 1. Sub-Agent Delegation (`extensions/subagent.ts`)
+### 1. Spec-Driven Development (`extensions/sdd.ts`)
+
+Brings native **Spec-Driven Development (SDD)** inspired by `github/spec-kit` directly into Pi with **zero repo pollution** and **hard tool gating**.
+
+| Command               | SDD Phase           | Generated Artifact        | Pi Enforcement & Gating                                                                                  |
+| :-------------------- | :------------------ | :------------------------ | :------------------------------------------------------------------------------------------------------- |
+| `/sdd constitution`   | **0. Ground Rules** | `specs/constitution.md`   | Read-only scan; writes architectural non-negotiables.                                                    |
+| `/sdd specify <idea>` | **1. What & Why**   | `specs/001-slug/spec.md`  | Auto-numbers folder; writes user stories & Gherkin acceptance criteria (no tech stack). **Code locked.** |
+| `/sdd clarify`        | **2. De-risk**      | Updates `spec.md`         | Audits `spec.md` for ambiguities and asks 3–5 targeted questions. **Code locked.**                       |
+| `/sdd plan`           | **3. How (Arch)**   | `specs/001-slug/plan.md`  | Maps packages, schemas, and UI boundaries validated against `specs/constitution.md`. **Code locked.**    |
+| `/sdd tasks`          | **4. Breakdown**    | `specs/001-slug/tasks.md` | Converts `plan.md` into ordered, checkable `[ ] T001` atomic work items. **Code locked.**                |
+| `/sdd implement`      | **5. Execute**      | Application code          | **Unlocks codebase writes.** Executes `tasks.md` sequentially, marking `[x]` as tests pass.              |
+| `/sdd audit`          | **6. Verify**       | Alignment report          | Cross-checks implemented git diff against `spec.md` and `constitution.md`.                               |
+| `/sdd status`         | Status              | TUI message               | Displays active feature, current phase, and task progress.                                               |
+| `/sdd off`            | Exit                | Reset to idle             | Returns agent to standard interactive mode.                                                              |
+
+- **Hard Tool Guardrails**: During phases 0–4 (`constitution`, `specify`, `clarify`, `plan`, `tasks`), Pi intercepts `write` and `edit` calls. The agent is **strictly blocked** from modifying application files (`apps/`, `packages/`, `src/`) and can only modify files inside `specs/`.
+- **Live TUI Status Bar**: Displays `SDD: 001-slug [PLAN - Code Locked]` or `SDD: 001-slug [IMPLEMENT - 3/8 Tasks]` in the terminal status bar.
+
+#### 💡 When to Use `/plan` vs `/sdd`
+
+- **Use `/plan`** for **15-minute tasks**: Quick bug fixes, small refactors, or tweaking a single component where a `specs/` directory is overkill.
+- **Use `/sdd`** for **multi-file features**: Adding cross-package monorepo modules, altering database/API schemas, or writing features that another developer or sub-agent will review or continue later.
+
+---
+
+### 2. Sub-Agent Delegation (`extensions/subagent.ts`)
 
 Spawns isolated, headless Pi child processes (`pi -p --mode json`) to execute secondary tasks without contaminating the parent context window.
 
@@ -101,7 +130,9 @@ Spawns isolated, headless Pi child processes (`pi -p --mode json`) to execute se
 - **Slash Command (`/subagent <task>`)**: User command to quickly launch a background sub-agent.
 - **Safe Sandboxing**: Child processes run in isolated contexts with separate working directories and strict execution timeouts.
 
-### 2. Plan Mode (`extensions/plan-mode.ts`)
+---
+
+### 3. Plan Mode (`extensions/plan-mode.ts`)
 
 Puts the agent into a strict read-only planning state before any code is modified.
 
@@ -109,7 +140,9 @@ Puts the agent into a strict read-only planning state before any code is modifie
 - **Slash Command (`/plan [on|off]`)**: Switch modes programmatically.
 - **Strict Guardrails**: When active, all mutating tools (`write`, `edit`) are disabled via `pi.setActiveTools()`. Bash commands are filtered through a strict read-only allowlist (`ls`, `cat`, `git status`, `git diff`, `grep`, `find`, etc.).
 
-### 3. Safety Guard (`extensions/safety-guard.ts`)
+---
+
+### 4. Safety Guard (`extensions/safety-guard.ts`)
 
 Active shield preventing data loss, credential leaks, and accidental system damage.
 
@@ -117,7 +150,9 @@ Active shield preventing data loss, credential leaks, and accidental system dama
 - **Destructive Command Interceptor**: Intercepts high-risk shell commands (`rm -rf`, `git push --force`, `git reset --hard`, `mkfs`, `sudo`) and pauses execution until explicit user confirmation is granted in the TUI.
 - **Slash Command (`/safety`)**: View current protection status and intercepted statistics.
 
-### 4. MCP Bridge (`extensions/mcp-bridge.ts`)
+---
+
+### 5. MCP Bridge (`extensions/mcp-bridge.ts`)
 
 Dynamic, on-demand connection to **Model Context Protocol (MCP)** servers over standard `stdio`.
 
@@ -129,7 +164,9 @@ Dynamic, on-demand connection to **Model Context Protocol (MCP)** servers over s
   ```
 - **Configuration**: Automatically reads server definitions from `.pi/mcp.json` or `~/.pi/mcp.json`.
 
-### 5. Antigravity CLI Integration (`extensions/agy.ts`)
+---
+
+### 6. Antigravity CLI Integration (`extensions/agy.ts`)
 
 Bridges Pi directly to Google Antigravity CLI tools.
 
@@ -178,6 +215,7 @@ node --experimental-strip-types scripts/model-manager.ts
 
 Skills are loaded into the agent's context dynamically when relevant tasks are triggered:
 
+- **`sdd-methodology`** (`skills/sdd-methodology/`): Spec-Driven Development methodology inspired by `github/spec-kit`. Standardized templates for `constitution.md`, `spec.md`, `plan.md`, and `tasks.md`.
 - **`antigravity`** (`skills/antigravity/`): Delegation patterns for autonomous background agents, provider quotas, and MCP tools.
 - **`app-store-connect`** (`skills/app-store-connect/`): Complete Apple release lifecycle: automated Xcode builds, build number auto-incrementing, TestFlight beta tester orchestration, metadata push/pull, and App Store review submission via `asc`.
 - **`expo-mobile`** (`skills/expo-mobile/`): React Native and Expo Router architecture, 60/120 FPS UI thread animations, FlashList performance, and Liquid Glass design.
@@ -189,6 +227,7 @@ Skills are loaded into the agent's context dynamically when relevant tasks are t
 To explicitly force Pi to load a specific skill:
 
 ```text
+/skill:sdd-methodology draft functional specification for offline sync
 /skill:app-store-connect prepare build and submit to TestFlight
 /skill:web-perf audit LCP and layout shifts on landing page
 /skill:tanstack-vite configure loader prefetching for dynamic route
